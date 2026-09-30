@@ -317,7 +317,7 @@ function executeReminderPost(e) {
 
 //======================================================================
 // _executeSlackPost
-// 2026/05/29 13:42
+// 26/09/30 12:25 ※JST
 //
 // [機能詳細]
 // 1. スクリプトプロパティからトークンを動的にロードする（不在時はガード）。
@@ -329,7 +329,7 @@ function executeReminderPost(e) {
 // 1. F列（件名）を置換した結果（cleanSubject）が空文字かどうかを判定する。
 // 2. 件名が空欄の場合（通常型）：スレッドは作らず、1通の通常チャットメッセージ
 //    （G列本文 ＋ ccメンション）として指定チャンネルへダイレクトに投稿する。
-// 3. 件名に入力がある場合（スレッド型）：まず件名を親メッセージとして太字
+// 3. 件名に入力がある場合（スレッド型）：親メッセージとしてメンションと件名を太字で
 //    投稿し、戻ってきた ts を thread_ts に指定して、詳細本文をそのスレッド内
 //    へ綺麗に返信（2段階投稿）させる。
 //
@@ -420,9 +420,14 @@ function _executeSlackPost(rule, baseDate) {
 
 	Logger.log(`📌 件名あり検出 ➔ 【スレッドモード】で2段階投稿を開始します。`);
 
+	let parentText = `*${cleanSubject}*`;
+	if (cleanMention !== "") {
+		parentText = cleanMention + "\n" + parentText;
+	}
+
 	const parentPayload = {
 		"channel": targetDestination,
-		"text": `*${cleanSubject}*` 
+		"text": parentText 
 	};
 	const parentOptions = {
 		"method": "post",
@@ -440,9 +445,7 @@ function _executeSlackPost(rule, baseDate) {
 			const threadTs = parentJson.ts;
 			Logger.log(`✅ 親メッセージ（件名）投稿成功。スレッド(ts: ${threadTs})に詳細を返信します。`);
 
-			let threadedBody = "";
-			if (cleanMention !== "") threadedBody += cleanMention + "\n";
-			threadedBody += cleanMessage + ccSuffix; 
+			let threadedBody = cleanMessage + ccSuffix; 
 
 			const threadPayload = {
 				"channel": targetDestination,
@@ -813,21 +816,16 @@ function _convertToSlackMentions(mentionStr) {
 
 //======================================================================
 // _replaceTemplateVariables
-// 2026/07/17 13:50 ※JST
+// 26/09/30 16:09 ※JST
 //
 // [機能詳細]
 // 1. 件名テンプレート（F列）および投稿文テンプレート（G列）内の変数を、
 //    Dateオブジェクトを基準に一括置換する。
 // 2. コピー＆ペーストなどで意図せず文字列の両端に付与されてしまった
-//    ダブルクォーテーション（"）を安全に除去し、Slack上でのURLリンク等
-//    の書式解釈エラーを防止する。
-//
-// [絶対遵守ロジック：大文字・小文字完全両対応ガード]
-// 1. 人間がシートに「{{yyyy}}」や「{{mm}}」のように小文字で入力して
-//    しまっても、正規表現のフラグ「/gi」（ケースインセンシティブ）を
-//    適用することで、大文字小文字の差異を完全に無視して100%確実に本日
-//    当日のカレンダー日付（西暦、2桁月、1桁月、2桁日、曜日、翌月）へ
-//    変換し、生文字列のまま誤送信されるトラブルを根絶する。
+//    ダブルクォーテーション（"）を安全に除去する。
+// 3. 互換性維持のため、既存の月シフト（M+1等）や固定変数を先に置換した上で、
+//    新たに導入した動的計算タグ（例: {{D+1}}, {{D+3biz}}）を正規表現で検知し、
+//    パース用サブ関数へ処理を委譲する。
 //
 //----------------------------------------------------------------------
 // [引数]
@@ -835,25 +833,15 @@ function _convertToSlackMentions(mentionStr) {
 //    baseDate: {Date} 基準となる本日当日の日付オブジェクト
 //
 // [戻り値]
-//    {String} すべての日付変数が本物の数字に変換された文字列
+//    {String} すべての日付変数が変換された文字列
 //======================================================================
 function _replaceTemplateVariables(template, baseDate) {
 	if (!template) return "";
 
 	let text = template;
-
-	// コピー＆ペースト等で意図せず付着した両端のダブルクォーテーションを除去
 	text = text.replace(/^\s*"([\s\S]*)"\s*$/, "$1");
 
-	const yyyy = String(baseDate.getFullYear());
-	const mm2  = String(baseDate.getMonth() + 1).padStart(2, '0');
-	const m1   = String(baseDate.getMonth() + 1);
-	const dd2  = String(baseDate.getDate()).padStart(2, '0');
-	const d1   = String(baseDate.getDate());
-	
-	const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
-	const eStr = weekdays[baseDate.getDay()];
-
+	// 1. 既存互換性の維持：固定の特殊タグや月単位のシフトを先に置換
 	const nextMonthDate = new Date(baseDate.getTime());
 	nextMonthDate.setMonth(baseDate.getMonth() + 1);
 	const yyyyNext = String(nextMonthDate.getFullYear());
@@ -877,12 +865,6 @@ function _replaceTemplateVariables(template, baseDate) {
 
 	text = text.replace(/{{YYYY_NEXT_MONTH}}/gi, yyyyNext);
 	text = text.replace(/{{YYYY_PREV_MONTH}}/gi, yyyyPrev);
-	text = text.replace(/{{YYYY}}/gi, yyyy);
-	text = text.replace(/{{MM}}/gi, mm2);
-	text = text.replace(/{{M}}/gi, m1);
-	text = text.replace(/{{DD}}/gi, dd2);
-	text = text.replace(/{{D}}/gi, d1);
-	text = text.replace(/{{E}}/gi, eStr);
 	text = text.replace(/{{THIS_WEEKEND_SAT}}/gi, satStr);
 	text = text.replace(/{{THIS_WEEKEND_SUN}}/gi, sunStr);
 	text = text.replace(/{{M\+1}}/gi, m1Next);   
@@ -890,16 +872,24 @@ function _replaceTemplateVariables(template, baseDate) {
 	text = text.replace(/{{MM\+1}}/gi, mm2Next); 
 	text = text.replace(/{{MM-1}}/gi, mm2Prev); 
 
+	// 2. 動的タグの処理：暦日および営業日の動的シフト計算
+	// 例: {{YYYY}}, {{D+1}}, {{D-2biz}}, {{M+3biz}}
+	const dynamicRegex = /\{\{(YYYY|MM|M|DD|D|E)(?:([-+])(\d+)(biz)?)?\}\}/gi;
+	text = text.replace(dynamicRegex, function(match, element, sign, amountStr, isBiz) {
+		return _processDynamicDateTag(baseDate, element, sign, amountStr, isBiz);
+	});
+
 	return text;
 }
 
 //======================================================================
 // _generateExtendedCalendarMap
-// 2026/05/29 13:48
+// 26/09/30 16:42 ※JST
 //
 // [機能詳細]
-// 1. 基準となる日時をベースに、前後数十日間のカレンダー営業日区分マップを生成。
-// 2. 日本の祝日カレンダーを動的に参照し、土日祝を判定して営業日フラグを立てる。
+// 1. 基準となる日時をベースに、前後数十日間のカレンダー営業日区分マップを生成する。
+// 2. Googleカレンダーのイベント参照による行事（七夕など）の誤検知を排除するため、
+//    BusinessDayライブラリを利用して確実な営業日および祝日判定を行う。
 //
 //----------------------------------------------------------------------
 // [引数]
@@ -915,7 +905,6 @@ function _generateExtendedCalendarMap(baseDate) {
 	startDate.setDate(baseDate.getDate() - 15); 
 
 	const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
-	const jpCalendar = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
 
 	for (let i = 0; i < daysToScan; i++) {
 		const targetDate = new Date(startDate.getTime());
@@ -925,16 +914,11 @@ function _generateExtendedCalendarMap(baseDate) {
 		const dayOfWeekNum = targetDate.getDay();
 		const dayOfWeekStr = weekdays[dayOfWeekNum];
 
-		let isHoliday = false;
-		const holidays = jpCalendar.getEventsForDay(targetDate);
-		if (holidays.length > 0) {
-			isHoliday = true;
-		}
+		// 外部ライブラリを用いた確実な営業日判定
+		const isBusinessDay = Common.isBusinessDayToday(targetDate);
 
-		let isBusinessDay = true;
-		if (dayOfWeekNum === 0 || dayOfWeekNum === 6 || isHoliday) {
-			isBusinessDay = false;
-		}
+		// 土日（0:日, 6:土）ではないが、営業日ではない日を祝日として判定
+		const isHoliday = (!isBusinessDay && dayOfWeekNum !== 0 && dayOfWeekNum !== 6);
 
 		calendarMap.push({
 			"date": dateStr,
@@ -945,33 +929,6 @@ function _generateExtendedCalendarMap(baseDate) {
 	}
 
 	return calendarMap;
-}
-
-//======================================================================
-// _clearExistingReminderProperties
-// 2026/05/29 13:49
-//
-// [機能詳細]
-// 1. 前日分の古い「REMINDER_TASK_QUEUE_」プロパティを完全消去してお掃除する。
-//
-//----------------------------------------------------------------------
-// [引数]
-//    なし
-//
-// [戻り値]
-//    {void}
-//======================================================================
-function _clearExistingReminderProperties() {
-	const scriptProperties = PropertiesService.getScriptProperties();
-	const allProps = scriptProperties.getProperties();
-	const prefix = "REMINDER_TASK_QUEUE_";
-
-	for (let key in allProps) {
-		if (key.indexOf(prefix) === 0) {
-			scriptProperties.deleteProperty(key);
-		}
-	}
-	Logger.log("🧹 前日までの古い残存タスクキュープロパティをすべてクリアしました。");
 }
 
 //======================================================================
@@ -1017,26 +974,26 @@ function _clearExistingReminderProperties() {
 }
 
 //======================================================================
-//	testExecuteNow（テストシート連動型・リアル再現シミュレーションDM送信）
-//	2026/06/01 19:35
+// testExecuteNow
+// 26/09/30 12:25 ※JST
 //
-//	[機能詳細]
-//	1. 「リマインダーテスト」シートから、I2セルのテスト実行日、および
-//	   J2セルの結果送付先メールアドレスを動的にロード。
-//	2. Gemini APIを用いて「もしその日の朝3時だったら、どの行にトリガーが
-//	   予約されるか」のスケジュール計算を本番と完全に同期して一括判定。
-//	3. 本物のSlackチャンネルやメールには1通も実送信せず、宛先をご自身のDMへ
-//	   完全固定（インターセプト）した状態で、配信時間や置換後のメッセージを構築。
-//	4. 【リアル再現ギミック】Slack送信（スレッド型）の場合は、J2のDM内で
-//	   実際に親見出しを投稿し、その投稿に対して自動でスレッド返信（子メッセージ）
-//	   をぶら下げる処理まで完璧に再現して擬似投稿を実行する。
+// [機能詳細]
+// 1. 「リマインダーテスト」シートから、I2セルのテスト実行日、および
+//    J2セルの結果送付先メールアドレスを動的にロード。
+// 2. Gemini APIを用いて「もしその日の朝3時だったら、どの行にトリガーが
+//    予約されるか」のスケジュール計算を本番と完全に同期して一括判定。
+// 3. 本物のSlackチャンネルやメールには1通も実送信せず、宛先をご自身のDMへ
+//    完全固定（インターセプト）した状態で、配信時間や置換後のメッセージを構築。
+// 4. 【リアル再現ギミック】Slack送信（スレッド型）の場合は、J2のDM内で
+//    実際に親見出し（メンション付き）を投稿し、その投稿に対して自動でスレッド返信
+//    （子メッセージ）をぶら下げる処理まで完璧に再現して擬似投稿を実行する。
 //
 //----------------------------------------------------------------------
-//	[引数]
-//		なし
+// [引数]
+//    なし
 //
-//	[戻り値]
-//		{void}
+// [戻り値]
+//    {void}
 //======================================================================
 function testExecuteNow() {
 	Logger.log("🧪 === 【手動テスト：本番判定シミュレーション実行】検証を開始します ===");
@@ -1159,7 +1116,7 @@ function testExecuteNow() {
 				const cleanMention = _convertToSlackMentions(rule.mentionEmails);
 				const cleanCCMention = _convertToSlackMentions(rule.ccEmails);
 
-				const destinationType = rule.slackChannel ? rule.slackChannel.replace(/^[\s　]+|[\s　]+$/g, "").trim().toLowerCase() : "";
+				const destinationType = rule.slackChannel ? rule.slackChannel.replace(/^[\s ]+|[\s ]+$/g, "").trim().toLowerCase() : "";
 				const isMailMode = (destinationType === "メール" || destinationType === "mail");
 
 				// ナレーション（シミュレーションの区切り案内）
@@ -1202,13 +1159,15 @@ function testExecuteNow() {
 						_sendTestDirectSlackMessage(token, slackUserId, finalBody, null);
 					} else {
 						// 🔥 スレッド型（2段階連動投稿）を、ユーザーのDMの部屋の中で完璧に再現
-						// まず親メッセージ（件名）を投稿し、そのシステム時間(ts)を掴む
-						const parentTs = _sendTestDirectSlackMessage(token, slackUserId, `*${cleanSubject}*`, null);
+						// まず親メッセージ（件名とメンション）を構築して投稿し、そのシステム時間(ts)を掴む
+						let parentText = `*${cleanSubject}*`;
+						if (cleanMention !== "") {
+							parentText = cleanMention + "\n" + parentText;
+						}
+						const parentTs = _sendTestDirectSlackMessage(token, slackUserId, parentText, null);
 						
 						if (parentTs) {
-							let threadedBody = "";
-							if (cleanMention !== "") threadedBody += cleanMention + "\n";
-							threadedBody += cleanMessage + ccSuffix; 
+							let threadedBody = cleanMessage + ccSuffix; 
 							
 							// 掴んだ親のtsを thread_ts に指定して返信！これでDM内でスレッドが組まれます
 							_sendTestDirectSlackMessage(token, slackUserId, threadedBody, parentTs);
@@ -1271,3 +1230,95 @@ function _getSlackUserIdByEmail(token, email) {
 	} catch (e) {}
 	return null;
 }
+
+//======================================================================
+// _processDynamicDateTag
+// 26/09/30 16:16 ※JST
+//
+// [機能詳細]
+// 1. 本文テンプレート内の動的日付タグ（例: {{D+3biz}}, {{MM-1}}など）をパースし、
+//    指定された基準日から暦日または営業日単位での加減算を正確に行う。
+// 2. 算出した日付オブジェクトを元に、元のタグ（YYYY, MM, M, DD, D, E）に
+//    対応するフォーマット済み文字列を呼び出し元（_replaceTemplateVariables）へ返却する。
+//
+//----------------------------------------------------------------------
+// [引数]
+//    baseDate : {Date} 基準となる日付オブジェクト（今日など）
+//    element  : {String} 抽出対象の要素（YYYY, MM, M, DD, D, E のいずれか）
+//    sign     : {String|undefined} 符号（"+" または "-"）。無指定の場合は undefined
+//    amountStr: {String|undefined} 加減算する数値の文字列。無指定の場合は undefined
+//    isBiz    : {String|undefined} "biz" が付与されているか。付与時は営業日計算
+//
+// [戻り値]
+//    {String} 計算・フォーマット済みの置換用日付文字列
+//======================================================================
+function _processDynamicDateTag(baseDate, element, sign, amountStr, isBiz) {
+	let targetDate = new Date(baseDate.getTime());
+	const amount = amountStr ? parseInt(amountStr, 10) : 0;
+	const isFuture = (sign === "+");
+
+	if (amount > 0) {
+		if (isBiz && isBiz.toLowerCase() === "biz") {
+			// 営業日ベースでの加減算サブ関数へ委譲
+			targetDate = _calculateBusinessDaysShift(targetDate, amount, isFuture);
+		} else {
+			// 単純な暦日ベースでの加減算
+			const direction = isFuture ? 1 : -1;
+			targetDate.setDate(targetDate.getDate() + (amount * direction));
+		}
+	}
+
+	const el = element.toUpperCase();
+	switch (el) {
+		case "YYYY":
+			return String(targetDate.getFullYear());
+		case "MM":
+			return String(targetDate.getMonth() + 1).padStart(2, '0');
+		case "M":
+			return String(targetDate.getMonth() + 1);
+		case "DD":
+			return String(targetDate.getDate()).padStart(2, '0');
+		case "D":
+			return String(targetDate.getDate());
+		case "E":
+			const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+			return weekdays[targetDate.getDay()];
+		default:
+			return match; // 予期せぬ要素の場合はそのまま返す（安全倒し）
+	}
+}
+
+//======================================================================
+// _calculateBusinessDaysShift
+// 26/09/30 16:17 ※JST
+//
+// [機能詳細]
+// 1. 基準日から指定された営業日数分だけ、未来または過去へ日付をシフトする。
+// 2. BusinessDayライブラリを利用し、土日および祝日をスキップしながら
+//    有効な営業日のみをカウントして目的の日付を算出する。
+//
+//----------------------------------------------------------------------
+// [引数]
+//    baseDate: {Date} 基準となる日付オブジェクト
+//    amount  : {Number} シフトする営業日数
+//    isFuture: {Boolean} true=未来方向へのシフト, false=過去方向へのシフト
+//
+// [戻り値]
+//    {Date} 算出された営業日シフト後の日付オブジェクト
+//======================================================================
+function _calculateBusinessDaysShift(baseDate, amount, isFuture) {
+	let targetDate = new Date(baseDate.getTime());
+	let count = 0;
+	const direction = isFuture ? 1 : -1;
+
+	while (count < amount) {
+		targetDate.setDate(targetDate.getDate() + direction);
+		// 外部ライブラリを用いて営業日判定
+		if (Common.isBusinessDayTodayY(targetDate)) {
+			count++;
+		}
+	}
+
+	return targetDate;
+}
+
