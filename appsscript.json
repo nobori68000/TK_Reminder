@@ -1,0 +1,21 @@
+{
+  "timeZone": "Asia/Tokyo",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "BusinessDay",
+        "version": "0",
+        "libraryId": "1rUryciqdRu0BK9d_JW54zcjQojHsk5NerbIhCZ23_G5RtTp45e2PaCm2",
+        "developmentMode": true
+      },
+      {
+        "userSymbol": "Trigger",
+        "version": "0",
+        "libraryId": "1GWVIB9r4JfsGRpGUwhLlq2tthMRzL-_bOvkcjeY2AhXkVtJ758OVQzS9",
+        "developmentMode": true
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}
